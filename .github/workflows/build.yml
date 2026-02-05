@@ -23,11 +23,7 @@ jobs:
         pip install pyinstaller
 
     - name: Build with PyInstaller
-      run: |
-        pyinstaller --noconfirm --onefile --windowed 
-          --name "MySQL_Doc_Gen" 
-          --clean 
-          doc_gen.py
+      run: pyinstaller --noconfirm --onefile --windowed --name "MySQL_Doc_Gen" --clean doc_gen.py
 
     - name: Zip the App
       run: |
