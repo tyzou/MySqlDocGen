@@ -174,9 +174,15 @@ class DBDocGeneratorApp:
         status_lbl = ttk.Label(action_frame, textvariable=self.status_var, foreground="#666666", font=("Microsoft YaHei UI", 9))
         status_lbl.pack(side="left", anchor="center")
         
-        # Main Action Button
-        self.btn_generate = ttk.Button(action_frame, text="生成 Word 文档", command=self.generate_doc, state="disabled")
-        self.btn_generate.pack(side="right")
+        # Main Action Buttons
+        self.btn_gen_word = ttk.Button(action_frame, text="导出 Word", command=self.generate_doc, state="disabled")
+        self.btn_gen_word.pack(side="right", padx=2)
+        
+        self.btn_gen_html = ttk.Button(action_frame, text="导出 HTML", command=self.generate_html, state="disabled")
+        self.btn_gen_html.pack(side="right", padx=2)
+        
+        self.btn_gen_md = ttk.Button(action_frame, text="导出 Markdown", command=self.generate_md, state="disabled")
+        self.btn_gen_md.pack(side="right", padx=2)
 
     def connect_db(self):
         try:
@@ -190,12 +196,16 @@ class DBDocGeneratorApp:
                 cursorclass=pymysql.cursors.DictCursor
             )
             self.status_var.set("已连接数据库。")
-            self.btn_generate.config(state="normal")  # Enable generate button
+            self.btn_gen_word.config(state="normal")
+            self.btn_gen_html.config(state="normal")
+            self.btn_gen_md.config(state="normal")
             self.fetch_tables()
         except Exception as e:
             messagebox.showerror("连接错误", str(e))
             self.status_var.set("连接失败。")
-            self.btn_generate.config(state="disabled")
+            self.btn_gen_word.config(state="disabled")
+            self.btn_gen_html.config(state="disabled")
+            self.btn_gen_md.config(state="disabled")
 
     def fetch_tables(self):
         if not self.conn:
@@ -251,6 +261,35 @@ class DBDocGeneratorApp:
             cursor.execute(sql, (self.db_var.get(), table_name))
             return cursor.fetchall()
 
+    def get_selected_table_data(self):
+        selected_indices = self.listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("警告", "请至少选择一张表！")
+            return None
+
+        selected_data = []
+        for idx in selected_indices:
+            display_text = self.listbox.get(idx)
+            table_name = display_text.split(" (")[0]
+            table_comment = next((t[1] for t in self.all_tables if t[0] == table_name), "")
+            columns = self.get_column_info(table_name)
+            selected_data.append({
+                'name': table_name,
+                'comment': table_comment,
+                'columns': columns
+            })
+        return selected_data
+
+    def parse_column_type(self, col):
+        col_type = col['DATA_TYPE']
+        col_len = ""
+        full_type = col['COLUMN_TYPE']
+        if "(" in full_type and ")" in full_type:
+            start = full_type.find("(") + 1
+            end = full_type.rfind(")")
+            col_len = full_type[start:end]
+        return col_type, col_len
+
     def set_cell_font(self, cell, text, bold=False):
         paragraph = cell.paragraphs[0]
         paragraph.clear() # Clear existing content if any
@@ -265,20 +304,9 @@ class DBDocGeneratorApp:
             messagebox.showwarning("警告", "请先连接数据库！")
             return
 
-        selected_indices = self.listbox.curselection()
-        if not selected_indices:
-            messagebox.showwarning("警告", "请至少选择一张表！")
+        table_data = self.get_selected_table_data()
+        if not table_data:
             return
-
-        # Get selected table names (parse out the name from the display text)
-        selected_tables = []
-        for idx in selected_indices:
-            display_text = self.listbox.get(idx)
-            # Display text is "TableName" or "TableName (Comment)"
-            table_name = display_text.split(" (")[0]
-            # Find the comment again from self.all_tables
-            table_comment = next((t[1] for t in self.all_tables if t[0] == table_name), "")
-            selected_tables.append((table_name, table_comment))
 
         default_filename = f"数据库文档_{datetime.datetime.now().strftime('%Y%m%d')}.docx"
         file_path = filedialog.asksaveasfilename(
@@ -302,15 +330,16 @@ class DBDocGeneratorApp:
             title = doc.add_heading(f'数据库设计文档: {self.db_var.get()}', 0)
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
             
-            for t_name, t_comment in selected_tables:
+            for table_info in table_data:
+                t_name = table_info['name']
+                t_comment = table_info['comment']
+                columns = table_info['columns']
+
                 # Table Heading
                 header_text = f"表名: {t_name}"
                 if t_comment:
                     header_text += f"   说明: {t_comment}"
                 doc.add_heading(header_text, level=2)
-
-                # Get columns
-                columns = self.get_column_info(t_name)
 
                 # Create Word Table
                 table = doc.add_table(rows=1, cols=6)
@@ -322,26 +351,11 @@ class DBDocGeneratorApp:
                 hdr_cells = table.rows[0].cells
                 for i, h_text in enumerate(headers):
                     self.set_cell_font(hdr_cells[i], h_text, bold=True)
-                    # Add background color to header (optional, keeping simple for now)
 
                 # Data Rows
                 for col in columns:
                     row_cells = table.add_row().cells
-                    
-                    # Parse Type/Length
-                    # col['COLUMN_TYPE'] e.g., "varchar(255)" or "int(10) unsigned"
-                    # col['DATA_TYPE'] e.g., "varchar" or "int"
-                    
-                    col_type = col['DATA_TYPE']
-                    col_len = ""
-                    
-                    # Extract content inside first parentheses for length/definition
-                    full_type = col['COLUMN_TYPE']
-                    if "(" in full_type and ")" in full_type:
-                        start = full_type.find("(") + 1
-                        end = full_type.rfind(")")
-                        # Simple extraction. For "enum('a', 'b')", this captures "'a', 'b'"
-                        col_len = full_type[start:end]
+                    col_type, col_len = self.parse_column_type(col)
                     
                     self.set_cell_font(row_cells[0], col['COLUMN_NAME'], bold=True)
                     self.set_cell_font(row_cells[1], col_type) 
@@ -357,8 +371,144 @@ class DBDocGeneratorApp:
             
         except Exception as e:
             messagebox.showerror("生成失败", f"错误详情: {e}")
-            import traceback
-            traceback.print_exc()
+
+    def generate_html(self):
+        if not self.conn:
+            messagebox.showwarning("警告", "请先连接数据库！")
+            return
+
+        table_data = self.get_selected_table_data()
+        if not table_data:
+            return
+
+        default_filename = f"数据库文档_{datetime.datetime.now().strftime('%Y%m%d')}.html"
+        file_path = filedialog.asksaveasfilename(
+            initialfile=default_filename,
+            defaultextension=".html",
+            filetypes=[("HTML Document", "*.html")],
+            title="保存 HTML 文档"
+        )
+        if not file_path:
+            return
+
+        try:
+            db_name = self.db_var.get()
+            html_content = [
+                "<!DOCTYPE html>",
+                "<html>",
+                "<head>",
+                f"<title>数据库设计文档: {db_name}</title>",
+                "<meta charset='utf-8'>",
+                "<style>",
+                "body { font-family: 'Microsoft YaHei', sans-serif; margin: 40px; background-color: #f5f5f5; }",
+                "h1 { text-align: center; color: #333; }",
+                "h2 { margin-top: 40px; color: #444; border-bottom: 2px solid #ddd; padding-bottom: 10px; }",
+                "table { width: 100%; border-collapse: collapse; margin-top: 10px; background-color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
+                "th, td { border: 1px solid #ccc; padding: 12px; text-align: left; }",
+                "th { background-color: #f8f8f8; font-weight: bold; }",
+                "tr:nth-child(even) { background-color: #fafafa; }",
+                ".col-name { font-weight: bold; color: #2c3e50; }",
+                "</style>",
+                "</head>",
+                "<body>",
+                f"<h1>数据库设计文档: {db_name}</h1>"
+            ]
+
+            for table_info in table_data:
+                t_name = table_info['name']
+                t_comment = table_info['comment']
+                columns = table_info['columns']
+
+                header_text = f"表名: {t_name}"
+                if t_comment:
+                    header_text += f" &nbsp;&nbsp; 说明: {t_comment}"
+                
+                html_content.append(f"<h2>{header_text}</h2>")
+                html_content.append("<table>")
+                html_content.append("<thead><tr><th>字段名</th><th>类型</th><th>长度/定义</th><th>允许空</th><th>默认值</th><th>注释</th></tr></thead>")
+                html_content.append("<tbody>")
+
+                for col in columns:
+                    col_type, col_len = self.parse_column_type(col)
+                    default_val = col['COLUMN_DEFAULT'] if col['COLUMN_DEFAULT'] is not None else 'NULL'
+                    
+                    html_content.append("<tr>")
+                    html_content.append(f"<td class='col-name'>{col['COLUMN_NAME']}</td>")
+                    html_content.append(f"<td>{col_type}</td>")
+                    html_content.append(f"<td>{col_len}</td>")
+                    html_content.append(f"<td>{col['IS_NULLABLE']}</td>")
+                    html_content.append(f"<td>{default_val}</td>")
+                    html_content.append(f"<td>{col['COLUMN_COMMENT']}</td>")
+                    html_content.append("</tr>")
+
+                html_content.append("</tbody></table>")
+
+            html_content.append("</body></html>")
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(html_content))
+
+            messagebox.showinfo("完成", f"HTML 文档已生成: {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("生成失败", f"错误详情: {e}")
+
+    def generate_md(self):
+        if not self.conn:
+            messagebox.showwarning("警告", "请先连接数据库！")
+            return
+
+        table_data = self.get_selected_table_data()
+        if not table_data:
+            return
+
+        default_filename = f"数据库文档_{datetime.datetime.now().strftime('%Y%m%d')}.md"
+        file_path = filedialog.asksaveasfilename(
+            initialfile=default_filename,
+            defaultextension=".md",
+            filetypes=[("Markdown Document", "*.md")],
+            title="保存 Markdown 文档"
+        )
+        if not file_path:
+            return
+
+        try:
+            db_name = self.db_var.get()
+            md_content = [
+                f"# 数据库设计文档: {db_name}\n"
+            ]
+
+            for table_info in table_data:
+                t_name = table_info['name']
+                t_comment = table_info['comment']
+                columns = table_info['columns']
+
+                header_text = f"## 表名: {t_name}"
+                if t_comment:
+                    header_text += f"   说明: {t_comment}"
+                
+                md_content.append(header_text)
+                md_content.append("\n| 字段名 | 类型 | 长度/定义 | 允许空 | 默认值 | 注释 |")
+                md_content.append("| --- | --- | --- | --- | --- | --- |")
+
+                for col in columns:
+                    col_type, col_len = self.parse_column_type(col)
+                    default_val = col['COLUMN_DEFAULT'] if col['COLUMN_DEFAULT'] is not None else 'NULL'
+                    
+                    # Escape pipe character in comment or default value if necessary
+                    comment = col['COLUMN_COMMENT'].replace("|", "\\|")
+                    
+                    md_content.append(f"| **{col['COLUMN_NAME']}** | {col_type} | {col_len} | {col['IS_NULLABLE']} | {default_val} | {comment} |")
+                
+                md_content.append("\n")
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(md_content))
+
+            messagebox.showinfo("完成", f"Markdown 文档已生成: {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("生成失败", f"错误详情: {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
