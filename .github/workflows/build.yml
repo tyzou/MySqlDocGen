@@ -32,38 +32,8 @@ jobs:
         name: MySQL_Doc_Gen_Windows
         path: dist/MySQL_Doc_Gen_Windows.exe
 
-  build-mac:
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-
-    - name: Build with PyInstaller
-      run: pyinstaller --noconfirm --onefile --windowed --name "MySQL_Doc_Gen_macOS" --clean doc_gen.py
-
-    - name: Zip the App
-      run: |
-        cd dist
-        zip -r MySQL_Doc_Gen_macOS.zip MySQL_Doc_Gen.app
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: MySQL_Doc_Gen_macOS
-        path: dist/MySQL_Doc_Gen_macOS.zip
-
   release:
-    needs: [build-windows, build-mac]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -73,18 +43,11 @@ jobs:
         name: MySQL_Doc_Gen_Windows
         path: ./release-assets
 
-    - name: Download macOS Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: MySQL_Doc_Gen_macOS
-        path: ./release-assets
-
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
           release-assets/MySQL_Doc_Gen_Windows.exe
-          release-assets/MySQL_Doc_Gen_macOS.zip
         draft: false
         prerelease: false
       env:
